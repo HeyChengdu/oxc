@@ -1,0 +1,5 @@
+{
+  "jsPlugins": ["./plugin.ts"],
+  "categories": { "correctness": "off" },
+  "rules": { "native-cfg/native-cfg": "error" }
+}

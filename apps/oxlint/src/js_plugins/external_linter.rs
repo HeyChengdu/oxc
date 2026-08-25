@@ -161,6 +161,7 @@ fn wrap_lint_file(cb: JsLintFileCb) -> ExternalLinterLintFileCb {
               options_ids: Vec<u32>,
               settings_json: String,
               globals_json: String,
+              external_control_flow_json: String,
               workspace_uri: Option<String>,
               allocator: &Allocator| {
             let (tx, rx) = channel();
@@ -183,6 +184,7 @@ fn wrap_lint_file(cb: JsLintFileCb) -> ExternalLinterLintFileCb {
                     options_ids,
                     settings_json,
                     globals_json,
+                    external_control_flow_json,
                     workspace_uri,
                 )),
                 ThreadsafeFunctionCallMode::NonBlocking,

@@ -23,6 +23,7 @@ import { resetTokens } from "./tokens.ts";
 import * as tokenMethods from "./tokens_methods.ts";
 import { getTokensAndComments, resetTokensAndComments } from "./tokens_and_comments.ts";
 import { debugAssertIsNonNull } from "../utils/asserts.ts";
+import { getControlFlowGraph } from "./control_flow.ts";
 
 import type { Program } from "../generated/types.d.ts";
 import type { Comment } from "./comments.ts";
@@ -217,6 +218,16 @@ export const SOURCE_CODE = Object.freeze({
    */
   get scopeManager(): ScopeManager {
     return SCOPE_MANAGER;
+  },
+
+  /**
+   * Oxc's native, read-only control-flow graph for this file.
+   *
+   * Block and edge IDs are local to the current file. Node ranges use the same UTF-16 offsets as
+   * ESTree `range` values.
+   */
+  get controlFlowGraph() {
+    return getControlFlowGraph();
   },
 
   /**

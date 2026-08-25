@@ -11,6 +11,7 @@ import { getErrorMessage } from "../utils/utils.ts";
 import { setGlobalsForFile, resetGlobals } from "./globals.ts";
 import { resetWeakMaps } from "./weak_map.ts";
 import { switchWorkspace } from "./workspace.ts";
+import { resetControlFlowGraph, setupControlFlowGraph } from "./control_flow.ts";
 import {
   addVisitorToCompiled,
   compiledVisitor,
@@ -51,6 +52,7 @@ const OPTIONS_DESCRIPTOR: PropertyDescriptor = { value: null };
  * @param optionsIds - IDs of options to use for rules on this file, in same order as `ruleIds`
  * @param settingsJSON - Settings for this file, as JSON string
  * @param globalsJSON - Globals for this file, as JSON string
+ * @param controlFlowGraphJSON - Native Oxc control-flow graph, as JSON string
  * @param workspaceUri - Workspace URI (`null` in CLI, string in LSP)
  * @returns Diagnostics or error serialized to JSON string
  */
@@ -62,6 +64,7 @@ export function lintFile(
   optionsIds: number[],
   settingsJSON: string,
   globalsJSON: string,
+  controlFlowGraphJSON: string,
   workspaceUri: string | null,
 ): string | null {
   try {
@@ -73,6 +76,7 @@ export function lintFile(
       optionsIds,
       settingsJSON,
       globalsJSON,
+      controlFlowGraphJSON,
       workspaceUri,
     );
 
@@ -120,6 +124,7 @@ export function lintFileImpl(
   optionsIds: number[],
   settingsJSON: string,
   globalsJSON: string,
+  controlFlowGraphJSON: string,
   workspaceUri: string | null,
 ) {
   // If new buffer, add it to `buffers` array. Otherwise, get existing buffer from array.
@@ -185,6 +190,7 @@ export function lintFileImpl(
   // So we pass the buffer to source code module here, so it can decode source text / deserialize AST on demand.
   const hasBOM = buffer[HAS_BOM_FLAG_POS] === 1;
   setupSourceForFile(buffer, hasBOM);
+  setupControlFlowGraph(controlFlowGraphJSON);
 
   // Pass settings and globals JSON to modules that handle them
   setSettingsForFile(settingsJSON);
@@ -311,6 +317,7 @@ export function resetFile() {
   resetSourceAndAst();
   resetSettings();
   resetGlobals();
+  resetControlFlowGraph();
   resetWeakMaps();
 }
 

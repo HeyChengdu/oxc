@@ -32,6 +32,7 @@ mod ast_util;
 mod config;
 mod context;
 mod disable_directives;
+mod external_control_flow;
 mod external_linter;
 mod external_plugin_store;
 mod fixer;
@@ -97,6 +98,7 @@ pub use crate::{
 use crate::{
     config::{LintConfig, OxlintEnv, OxlintGlobals, OxlintSettings},
     context::ContextHost,
+    external_control_flow::ExternalControlFlow,
     external_linter::GlobalsAndEnvs,
     fixer::CompositeFix,
     loader::LINT_PARTIAL_LOADER_EXTENSIONS,
@@ -536,6 +538,7 @@ impl Linter {
         // TODO: It would be better to avoid the need for a `&mut Program` here, and so avoid this
         // sketchy behavior.
         let ctx_host = Rc::get_mut(ctx_host).unwrap();
+        let mut external_control_flow = ExternalControlFlow::from_semantic(ctx_host.semantic());
         let semantic = mem::take(ctx_host.semantic_mut());
         let program_addr = NonNull::from(semantic.nodes().program()).addr();
         // Check `Program` is in `Allocator`'s current chunk
@@ -555,6 +558,7 @@ impl Linter {
                 ctx_host,
                 program,
                 js_allocator_pool,
+                &mut external_control_flow,
             );
             return;
         }
@@ -577,6 +581,7 @@ impl Linter {
             program,
             tokens,
             allocator,
+            &mut external_control_flow,
         );
     }
 
@@ -605,6 +610,7 @@ impl Linter {
         ctx_host: &ContextHost<'_>,
         original_program: &mut Program<'_>,
         js_allocator_pool: &AllocatorPool,
+        external_control_flow: &mut ExternalControlFlow,
     ) {
         let js_allocator_guard = js_allocator_pool.get();
         let js_allocator = &*js_allocator_guard;
@@ -663,6 +669,7 @@ impl Linter {
             program,
             tokens,
             js_allocator,
+            external_control_flow,
         );
 
         // The `AllocatorGuard` (`js_allocator_guard`) is dropped here, returning the allocator to the pool.
@@ -682,6 +689,7 @@ impl Linter {
         program: &mut Program<'_>,
         tokens: &mut [Token],
         allocator: &Allocator,
+        external_control_flow: &mut ExternalControlFlow,
     ) {
         // If has BOM, remove it
         const BOM: &str = "\u{feff}";
@@ -729,6 +737,9 @@ impl Linter {
 
         // Convert AST spans to UTF-16
         span_converter.convert_program(program);
+        if let Some(mut converter) = span_converter.converter() {
+            external_control_flow.convert_spans_to_utf16(&mut |span| converter.convert_span(span));
+        }
 
         // Convert comment spans to UTF-16.
         // Also set the `content` field (byte 15) of each comment to `None` (0).
@@ -799,6 +810,8 @@ impl Linter {
 
         // `external_linter` always exists when `external_rules` is not empty
         let external_linter = self.external_linter.as_ref().unwrap();
+        let external_control_flow_json = serde_json::to_string(external_control_flow)
+            .expect("external control-flow projection must serialize");
 
         // Pass AST and rule IDs + options IDs to JS
         let result = (external_linter.lint_file)(
@@ -807,6 +820,7 @@ impl Linter {
             external_rules.iter().map(|(_, options_id, _)| options_id.raw()).collect(),
             settings_json,
             globals_json,
+            external_control_flow_json,
             self.workspace_uri.as_ref().map(ToString::to_string),
             allocator,
         );

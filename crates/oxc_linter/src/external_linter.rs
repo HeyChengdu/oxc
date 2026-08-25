@@ -53,6 +53,8 @@ pub type ExternalLinterLintFileCb = Arc<
                 String,
                 // Globals JSON
                 String,
+                // Native Oxc control-flow graph, as JSON string
+                String,
                 // Workspace URI (e.g. `file:///path/to/workspace`).
                 // `None` in CLI mode (single workspace), `Some` in LSP mode.
                 Option<String>,
