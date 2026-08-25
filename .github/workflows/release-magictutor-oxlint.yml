@@ -1,0 +1,74 @@
+name: Release MagicTutor Oxlint
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable release tag
+        required: true
+        default: magictutor-oxlint-1.80.0-1
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oxc-project/setup-node@d59b270414aa7d0eed947eed4eb5b0b8a675f01d # v1.4.0
+      - name: Build matching JS bridge and native binding
+        working-directory: apps/oxlint
+        run: |
+          pnpm run build-napi-release --target ${{ matrix.target }}
+          pnpm run build-js
+      - name: Package runnable distribution
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$COMMIT_SHA" > apps/oxlint/dist/FORK_COMMIT
+          tar -C apps/oxlint -czf "oxlint-${PLATFORM}.tar.gz" dist
+          shasum -a 256 "oxlint-${PLATFORM}.tar.gz" > "oxlint-${PLATFORM}.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: oxlint-${{ matrix.platform }}
+          path: |
+            oxlint-${{ matrix.platform }}.tar.gz
+            oxlint-${{ matrix.platform }}.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: oxlint-*
+          path: release
+          merge-multiple: true
+      - name: Publish immutable runtime assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes "MagicTutor pinned Oxlint runtime built from $GITHUB_SHA."
