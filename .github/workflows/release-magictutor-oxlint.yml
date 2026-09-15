@@ -6,35 +6,98 @@ on:
       tag:
         description: Immutable release tag
         required: true
-        default: magictutor-oxlint-1.80.0-1
+        default: magictutor-oxlint-1.80.0-2
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            target: aarch64-apple-darwin
-            platform: darwin-arm64
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            platform: linux-x64
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            platform: linux-arm64
-    runs-on: ${{ matrix.os }}
+  build-macos:
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
       - uses: oxc-project/setup-node@d59b270414aa7d0eed947eed4eb5b0b8a675f01d # v1.4.0
       - name: Build matching JS bridge and native binding
         working-directory: apps/oxlint
         run: |
+          pnpm run build-napi-release --target aarch64-apple-darwin
+          pnpm run build-js
+      - name: Package runnable distribution
+        shell: bash
+        env:
+          PLATFORM: darwin-arm64
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$COMMIT_SHA" > apps/oxlint/dist/FORK_COMMIT
+          tar -C apps/oxlint -czf "oxlint-${PLATFORM}.tar.gz" dist
+          shasum -a 256 "oxlint-${PLATFORM}.tar.gz" > "oxlint-${PLATFORM}.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: oxlint-darwin-arm64
+          path: |
+            oxlint-darwin-arm64.tar.gz
+            oxlint-darwin-arm64.sha256
+          if-no-files-found: error
+
+  build-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    # linux 产物必须在与 MagicTutor 生产 runtime 同基线的镜像里编译：
+    # 生产 server 镜像使用 node:24.15.0-bookworm-slim（Debian 12 / glibc 2.36），
+    # 这里改用同版本的完整镜像，以便 actions/checkout 用到 git 等基础工具。
+    # digest 为 node:24.15.0-bookworm 的 manifest list，amd64 与 arm64 都覆盖。
+    container: node:24.15.0-bookworm@sha256:f22d6a1f082c02f292e86929b5b0442ac2e5eaf438a5dea9b1566601c3e05940
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned build toolchain
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential pkg-config clang cmake nasm
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.98.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: oxc-project/setup-node@d59b270414aa7d0eed947eed4eb5b0b8a675f01d # v1.4.0
+      - name: Build matching JS bridge and native binding
+        working-directory: apps/oxlint
+        run: |
           pnpm run build-napi-release --target ${{ matrix.target }}
           pnpm run build-js
+      - name: Assert glibc contract and load native binding
+        run: |
+          set -euo pipefail
+          allowed_glibc='2.36'
+          binding="$(ls apps/oxlint/dist/*.node | head -n 1)"
+          required="$(objdump -T "$binding" | grep -o 'GLIBC_[0-9.]*' | sort -V -u | tail -n 1)"
+          required_version="${required#GLIBC_}"
+          echo "binding=$binding required=$required allowed=GLIBC_$allowed_glibc"
+          highest="$(printf '%s\n%s\n' "$required_version" "$allowed_glibc" | sort -V | tail -n 1)"
+          if [ "$highest" != "$allowed_glibc" ]; then
+            echo "::error::产物要求 glibc $required_version，超过生产 runtime 的 GLIBC_$allowed_glibc"
+            exit 1
+          fi
+          node --input-type=module -e "await import('./apps/oxlint/dist/bindings.js')"
+      - name: Bundle pinned WASI fallback binding
+        run: |
+          set -euo pipefail
+          wasi_version='1.80.0'
+          mkdir -p apps/oxlint/dist/node_modules/@oxlint
+          temporary="$(mktemp -d)"
+          curl -fsSL \
+            "https://registry.npmjs.org/@oxlint/binding-wasm32-wasi/-/binding-wasm32-wasi-${wasi_version}.tgz" \
+            -o "$temporary/wasi.tgz"
+          tar -xzf "$temporary/wasi.tgz" -C "$temporary"
+          cp -R "$temporary/package" "apps/oxlint/dist/node_modules/@oxlint/binding-wasm32-wasi"
       - name: Package runnable distribution
         shell: bash
         env:
@@ -44,7 +107,7 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$COMMIT_SHA" > apps/oxlint/dist/FORK_COMMIT
           tar -C apps/oxlint -czf "oxlint-${PLATFORM}.tar.gz" dist
-          shasum -a 256 "oxlint-${PLATFORM}.tar.gz" > "oxlint-${PLATFORM}.sha256"
+          sha256sum "oxlint-${PLATFORM}.tar.gz" > "oxlint-${PLATFORM}.sha256"
       - uses: actions/upload-artifact@v7
         with:
           name: oxlint-${{ matrix.platform }}
@@ -54,8 +117,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
-    runs-on: ubuntu-latest
+    needs: [build-macos, build-linux]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -71,4 +134,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$TAG" \
-            --notes "MagicTutor pinned Oxlint runtime built from $GITHUB_SHA."
+            --notes "MagicTutor pinned Oxlint runtime built from $GITHUB_SHA on Debian 12 bookworm (glibc 2.36) for linux assets."
