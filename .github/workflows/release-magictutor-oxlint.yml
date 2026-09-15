@@ -89,18 +89,6 @@ jobs:
             exit 1
           fi
           node --input-type=module -e "await import('./apps/oxlint/dist/bindings.js')"
-      - name: Bundle pinned WASI fallback binding
-        shell: bash
-        run: |
-          set -euo pipefail
-          wasi_version='1.80.0'
-          mkdir -p apps/oxlint/dist/node_modules/@oxlint
-          temporary="$(mktemp -d)"
-          curl -fsSL \
-            "https://registry.npmjs.org/@oxlint/binding-wasm32-wasi/-/binding-wasm32-wasi-${wasi_version}.tgz" \
-            -o "$temporary/wasi.tgz"
-          tar -xzf "$temporary/wasi.tgz" -C "$temporary"
-          cp -R "$temporary/package" "apps/oxlint/dist/node_modules/@oxlint/binding-wasm32-wasi"
       - name: Package runnable distribution
         shell: bash
         env:
